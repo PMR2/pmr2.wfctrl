@@ -17,16 +17,6 @@ long_description = (
     open(os.path.join('docs', 'CHANGES.rst')).read()
     + '\n')
 
-
-class InstallCommand(install):
-
-    def run(self):
-        install.run(self)
-        # Automatically install requirements from requirements.txt
-        import subprocess
-        subprocess.call(['pip', 'install', '-r', os.path.join(SETUP_DIR, 'requirements.txt')])
-
-
 setup(name='pmr2.wfctrl',
       version=version,
       description="Workflow controller",
@@ -36,7 +26,6 @@ setup(name='pmr2.wfctrl',
       classifiers=[
         "Programming Language :: Python",
         ],
-      cmdclass={'install': InstallCommand,},
       keywords='',
       author='',
       author_email='',
@@ -49,7 +38,7 @@ setup(name='pmr2.wfctrl',
       zip_safe=False,
       install_requires=[
           'setuptools',
-          # 'dulwich',
+          'dulwich',
           # -*- Extra requirements: -*-
       ],
       entry_points="""
