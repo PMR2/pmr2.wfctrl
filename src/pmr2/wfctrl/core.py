@@ -24,6 +24,14 @@ def register_cmd(*cmd_classes):
             _cmd_names[cmd_cls.name] = cmd_cls
 
 def get_cmd_by_name(cmd_name):
+    cmd_cls = get_cmd_class_by_name(cmd_name)
+    if cmd_cls:
+        return cmd_cls()
+    else:
+        return None
+
+
+def get_cmd_class_by_name(cmd_name):
     return _cmd_names.get(cmd_name)
 
 
