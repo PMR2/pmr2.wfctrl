@@ -7,6 +7,7 @@ on:
       - testing
       - 0.3.x
       - 0.4.x
+      - 0.5.x
     tags:
   pull_request:
     branches:
