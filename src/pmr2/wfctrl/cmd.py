@@ -3,6 +3,8 @@ from os.path import join, isdir
 import sys
 from io import BytesIO
 
+import urllib3
+
 if sys.version_info > (3, 0):  # pragma: no cover
     from configparser import ConfigParser
 else:  # pragma: no cover
@@ -53,80 +55,6 @@ class DemoDvcsCmd(BaseDvcsCmdBin):
 
     def push(self, workspace, **kw):
         self.queue.append([self.binary, 'push'])
-
-
-class MercurialDvcsCmd(BaseDvcsCmdBin):
-    cmd_binary = 'hg'
-    name = 'mercurial'
-    marker = '.hg'
-    default_remote = 'default'
-    _hgrc = 'hgrc'
-    _committer = None
-
-    def _args(self, workspace, *args):
-        result = ['-R', workspace.working_dir]
-        result.extend(args)
-        return result
-
-    def set_committer(self, name, email, **kw):
-        # TODO persist config.
-        self._committer = '%s <%s>' % (name, email)
-
-    def clone(self, workspace, **kw):
-        return self.execute('clone', self.remote, workspace.working_dir)
-
-    def init_new(self, workspace, **kw):
-        return self.execute('init', workspace.working_dir)
-
-    def add(self, workspace, path, **kw):
-        return self.execute(*self._args(workspace, 'add', path))
-
-    def commit(self, workspace, message, **kw):
-        # XXX need to customize the user name
-        cmd = ['commit', '-m', message]
-        if self._committer:
-            cmd.extend(['-u', self._committer])
-        return self.execute(*self._args(workspace, *cmd))
-
-    def read_remote(self, workspace, target_remote=None, **kw):
-        target_remote = target_remote or self.default_remote
-        target = join(workspace.working_dir, self.marker, self._hgrc)
-        cp = ConfigParser()
-        cp.read(target)
-        if cp.has_option('paths', target_remote):
-            return cp.get('paths', target_remote)
-
-    def write_remote(self, workspace, target_remote=None, **kw):
-        target_remote = target_remote or self.default_remote
-        target = join(workspace.working_dir, self.marker, self._hgrc)
-        cp = ConfigParser()
-        cp.read(target)
-        if not cp.has_section('paths'):
-            cp.add_section('paths')
-        cp.set('paths', target_remote, self.remote)
-        with open(target, 'w') as fd:
-            cp.write(fd)
-
-    def pull(self, workspace, username=None, password=None, **kw):
-        # XXX origin may be undefined
-        target = self.get_remote(workspace,
-                                 username=username, password=password)
-        # XXX assuming repo is clean
-        args = self._args(workspace, 'pull', target)
-        return self.execute(*args)
-
-    def push(self, workspace, username=None, password=None, **kw):
-        # XXX origin may be undefined
-        push_target = self.get_remote(workspace,
-                                      username=username, password=password)
-        args = self._args(workspace, 'push', push_target)
-        return self.execute(*args)
-
-    def reset_to_remote(self, workspace, branch=None):
-        if branch is None:
-            branch = 'tip'
-        args = self._args(workspace, 'update', '-C', '-r', branch)
-        return self.execute(*args)
 
 
 class GitDvcsCmd(BaseDvcsCmdBin):
@@ -214,6 +142,40 @@ class GitDvcsCmd(BaseDvcsCmdBin):
             branch = branch.strip()
         args = self._args(workspace, 'reset', '--hard', branch)
         return self.execute(*args)
+
+
+class AuthenticatedGitDvcsCmd(GitDvcsCmd):
+    name = 'authenticated_git'
+
+    def __init__(self, remote=None, cmd_binary=None):
+        super().__init__(remote=remote, cmd_binary=cmd_binary)
+
+        self._auth_header = None
+
+    def set_authorization(self, authorization_header):
+        """
+        Sets the authorization header for requests made by this class. The input should specify the type of authorization along with the
+        authorization token itself (e.g., "Basic {token}").
+        """
+        self._auth_header = authorization_header
+
+    def _authenticate(self, workspace):
+        args = ['config', 'http.extraHeader', f'Authorization: {self._auth_header}']
+        return self.execute(*self._args(workspace, *args))
+
+    def clone(self, workspace, **kw):
+        args = ['clone', '--config', f'http.extraHeader=Authorization: {self._auth_header}', self.remote, workspace.working_dir]
+        return self.execute(*args)
+
+    def pull(self, workspace, **kw):
+        self._authenticate(workspace)
+        target = self.read_remote(workspace)
+        return self.execute(*self._args(workspace, 'pull', target))
+
+    def push(self, workspace, **kw):
+        self._authenticate(workspace)
+        target = self.get_remote(workspace)
+        return self.execute(*self._args(workspace, 'push', target))
 
 
 class DulwichDvcsCmd(BaseDvcsCmd):
@@ -311,8 +273,82 @@ class DulwichDvcsCmd(BaseDvcsCmd):
         return b'', b'', 0
 
 
+class AuthenticatedDulwichDvcsCmd(DulwichDvcsCmd):
+    name = 'authenticated_dulwich'
+
+    def __init__(self, remote=None):
+        super().__init__(remote=remote)
+
+        self._auth_header = None
+
+    def set_authorization(self, authorization_header):
+        """
+        Sets the authorization header for requests made by this class. The input should specify the type of authorization along with the
+        authorization token itself (e.g., "Basic {token}").
+        """
+        self._auth_header = authorization_header
+
+    def _authenticate_pool_manager(self, *args, **kwargs):
+        pool_manager = urllib3.PoolManager()
+        pool_manager.headers['Authorization'] = self._auth_header
+        return pool_manager
+
+    def clone(self, workspace, **kw):
+        pool_manager = self._authenticate_pool_manager()
+        out_stream = BytesIO()
+        err_stream = BytesIO()
+        porcelain.clone(
+            self.remote,
+            workspace.working_dir,
+            pool_manager=pool_manager,
+            outstream=out_stream,
+            errstream=err_stream
+        )
+        return out_stream.getvalue(), err_stream.getvalue(), 0
+
+    def pull(self, workspace, **kw):
+        pool_manager = self._authenticate_pool_manager()
+        target = self.read_remote(workspace)
+        out_stream = BytesIO()
+        err_stream = BytesIO()
+        try:
+            result = 0
+            porcelain.pull(
+                workspace.working_dir,
+                target.encode(),
+                pool_manager=pool_manager,
+                outstream=out_stream,
+                errstream=err_stream
+            )
+        except NotGitRepository as e:
+            result = 1
+            err_stream.write(b'Not a Git repository ' + target.encode())
+
+        return out_stream.getvalue(), err_stream.getvalue(), result
+
+    def push(self, workspace, **kw):
+        pool_manager = self._authenticate_pool_manager()
+        target = self.read_remote(workspace)
+        out_stream = BytesIO()
+        err_stream = BytesIO()
+        try:
+            result = 0
+            porcelain.push(
+                workspace.working_dir,
+                target.encode(),
+                pool_manager=pool_manager,
+                outstream=out_stream,
+                errstream=err_stream
+            )
+        except NotGitRepository as e:
+            result = 1
+            err_stream.write(b'Not a Git repository ' + target.encode())
+
+        return out_stream.getvalue(), err_stream.getvalue(), result
+
+
 def _register():
-    register_cmd(MercurialDvcsCmd, DulwichDvcsCmd, GitDvcsCmd)
+    register_cmd(DulwichDvcsCmd, GitDvcsCmd, AuthenticatedDulwichDvcsCmd, AuthenticatedGitDvcsCmd)
 
 
 register = _register

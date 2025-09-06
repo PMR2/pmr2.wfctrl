@@ -1,7 +1,18 @@
 Changelog
 =========
 
-0.6.0 - 202?-??-??
+0.8.0 - 2025-??-??
+------------------
+
+- Drop support for Mercurial.
+
+0.7.0 - 2024-08-02
+------------------
+
+- Provide subclasses of existing commmands that allow credentials be
+  provided for accessing private workspaces.
+
+0.6.0 - 2023-10-17
 ------------------
 
 - Ensure that Dulwich methods return values match closer with the

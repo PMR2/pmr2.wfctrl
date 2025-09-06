@@ -1,4 +1,5 @@
-from unittest import TestCase, skipIf
+import platform
+from unittest import TestCase, skipIf, skip
 
 import os
 import sys
@@ -12,15 +13,17 @@ else:  # pragma: no cover
     from StringIO import StringIO
 
 try:
-    from dulwich import porcelain
+    from dulwich import porcelain, client
+
 except ImportError:
     pass
 
 from pmr2.wfctrl.core import get_cmd_by_name
 from pmr2.wfctrl.core import CmdWorkspace
 from pmr2.wfctrl.cmd import GitDvcsCmd
-from pmr2.wfctrl.cmd import MercurialDvcsCmd
 from pmr2.wfctrl.cmd import DulwichDvcsCmd
+from pmr2.wfctrl.cmd import AuthenticatedGitDvcsCmd
+from pmr2.wfctrl.cmd import AuthenticatedDulwichDvcsCmd
 
 from pmr2.wfctrl.testing.base import CoreTestCase
 from pmr2.wfctrl.testing.base import CoreTests
@@ -280,38 +283,6 @@ class GitDvcsCmdTestCase(CoreTestCase, RawCmdTests):
         super(GitDvcsCmdTestCase, self).test_auto_init()
 
 
-@skipIf(not MercurialDvcsCmd.available(), 'mercurial is not available')
-class MercurialDvcsCmdTestCase(CoreTestCase, RawCmdTests):
-    cmdcls = MercurialDvcsCmd
-
-    def setUp(self):
-        super(MercurialDvcsCmdTestCase, self).setUp()
-        self.cmd = MercurialDvcsCmd()
-        self.workspace = CmdWorkspace(self.workspace_dir, self.cmd)
-
-    def _log(self, workspace=None):
-        return MercurialDvcsCmd._execute(self.cmd._args(self.workspace, 'log'))
-
-    def _ls_root(self, workspace=None):
-        return MercurialDvcsCmd._execute(
-            self.cmd._args(self.workspace, 'manifest'))
-
-    def _make_remote(self):
-        target = os.path.join(self.working_dir, 'remote')
-        MercurialDvcsCmd._execute(['init', target])
-        return target
-
-    def test_read_write_remote(self):
-        self.cmd.init_new(self.workspace)
-        cmd = MercurialDvcsCmd(remote='http://example.com/hg')
-        cmd.write_remote(self.workspace)
-        with open(os.path.join(self.workspace_dir, '.hg', 'hgrc')) as fd:
-            self.assertTrue('default = http://example.com/hg' in fd.read())
-
-    def test_get_cmd_by_name(self):
-        self.assertEqual(get_cmd_by_name('mercurial'), self.cmdcls)
-
-
 @skipIf(not DulwichDvcsCmd.available(), 'dulwich is not available')
 class DulwichDvcsCmdTestCase(CoreTestCase, RawCmdTests):
     cmdcls = DulwichDvcsCmd
@@ -344,3 +315,151 @@ class DulwichDvcsCmdTestCase(CoreTestCase, RawCmdTests):
 
     def test_get_cmd_by_name(self):
         self.assertEqual(get_cmd_by_name('dulwich'), self.cmdcls)
+
+    # the following two tests mostly here for coverage purposes.
+    # as they don't connect to real repositories.
+
+    def test_push_url_with_creds(self):
+        workspace = CmdWorkspace(self.workspace_dir, self.cmd)
+        _, _, code = self.cmd.push(
+            workspace, username='username', password='password')
+        self.assertEqual(code, 1)
+
+    def test_pull_url_with_creds(self):
+        workspace = CmdWorkspace(self.workspace_dir, self.cmd)
+        _, _, code = self.cmd.pull(
+            workspace, username='username', password='password')
+        self.assertEqual(code, 1)
+
+
+@skipIf(not AuthenticatedGitDvcsCmd.available(), 'git is not available')
+class AuthenticatedGitDvcsCmdTestCase(GitDvcsCmdTestCase):
+    cmdcls = AuthenticatedGitDvcsCmd
+
+    def setUp(self):
+        super(AuthenticatedGitDvcsCmdTestCase, self).setUp()
+        self.cmd = AuthenticatedGitDvcsCmd()
+        self.workspace = CmdWorkspace(self.workspace_dir, self.cmd)
+
+    def _log(self, workspace=None):
+        return AuthenticatedGitDvcsCmd._execute(self.cmd._args(self.workspace, 'log'))
+
+    def _ls_root(self, workspace=None):
+        branch, _, *_ = self.cmd.execute(
+            *self.cmd._args(self.workspace, 'branch', '--show-current'))
+        branch = branch.strip()
+        return AuthenticatedGitDvcsCmd._execute(
+            self.cmd._args(self.workspace, 'ls-tree', branch))
+
+    def _make_remote(self):
+        target = os.path.join(self.working_dir, 'remote')
+        AuthenticatedGitDvcsCmd._execute(['init', target, '--bare'])
+        return target
+
+    def test_get_cmd_by_name(self):
+        self.assertEqual(get_cmd_by_name('authenticated_git'), self.cmdcls)
+
+    def test_push_url_with_creds(self):
+        credentials = 'Basic username:password'
+        cmd = self.TrapCmd(remote='http://example.com/')
+        cmd.set_authorization(credentials)
+        workspace = CmdWorkspace(self.workspace_dir, cmd)
+        cmd.push(workspace)
+        auth_header = cmd.execute(*cmd._args(workspace, 'config', '--get', 'http.extraHeader'))
+        self.assertEqual(f'Authorization: {credentials}', auth_header[0].decode().strip())
+
+    def test_pull_url_with_creds(self):
+        credentials = 'Basic username:password'
+        cmd = self.TrapCmd(remote='http://example.com/')
+        cmd.set_authorization(credentials)
+        workspace = CmdWorkspace(self.workspace_dir, cmd)
+        cmd.pull(workspace)
+        auth_header = cmd.execute(*cmd._args(workspace, 'config', '--get', 'http.extraHeader'))
+        self.assertEqual(f'Authorization: {credentials}', auth_header[0].decode().strip())
+
+    def test_clone(self):
+        credentials = 'Basic username:password'
+        cmd = self.TrapCmd(remote='http://example.com/')
+        cmd.set_authorization(credentials)
+        target = os.path.join(self.working_dir, 'new_target')
+        workspace = CmdWorkspace(target, cmd)
+        cmd.init_new(workspace)
+        result = cmd.clone(workspace)
+
+        self.assertTrue(isdir(join(target, self.marker)))
+        authorisation = f'http.extraHeader=Authorization: {credentials}'
+        self.assertIn(authorisation, result[0].decode())
+
+    @skip("Not applicable.")
+    def test_auto_init(self):
+        pass
+
+
+class CustomLocalGitClient(client.LocalGitClient):
+    def __init__(self, pool_manager=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
+class TrapDulwichCmd(AuthenticatedDulwichDvcsCmd):
+    def __init__(self,  remote=None):
+        super(TrapDulwichCmd, self).__init__(remote)
+        self._pool_manager = None
+
+    def _authenticate_pool_manager(self, *args, **kwargs):
+        self._pool_manager = super(TrapDulwichCmd, self)._authenticate_pool_manager(*args, **kwargs)
+
+
+@skipIf(not AuthenticatedDulwichDvcsCmd.available(), 'dulwich is not available')
+class AuthenticatedDulwichDvcsCmdTestCase(DulwichDvcsCmdTestCase):
+    cmdcls = AuthenticatedDulwichDvcsCmd
+
+    def setUp(self):
+        super(DulwichDvcsCmdTestCase, self).setUp()
+        self.cmd = AuthenticatedDulwichDvcsCmd()
+        self.workspace = CmdWorkspace(self.workspace_dir, self.cmd)
+
+        # Temporarily override the local dulwich client.
+        self._default_client = client.default_local_git_client_cls
+        client.default_local_git_client_cls = CustomLocalGitClient
+
+    def tearDown(self):
+        # Reset the local dulwich client.
+        client.default_local_git_client_cls = self._default_client
+
+    def test_get_cmd_by_name(self):
+        self.assertEqual(get_cmd_by_name('authenticated_dulwich'), self.cmdcls)
+
+    def test_push_url_with_creds(self):
+        credentials = 'Basic username:password'
+        cmd = TrapDulwichCmd()
+        cmd.set_authorization(credentials)
+        workspace = CmdWorkspace(self.workspace_dir, cmd)
+        cmd.push(workspace)
+        auth_header = cmd._pool_manager.headers['Authorization']
+        self.assertEqual(credentials, auth_header)
+
+    def test_pull_url_with_creds(self):
+        credentials = 'Basic username:password'
+        cmd = TrapDulwichCmd()
+        cmd.set_authorization(credentials)
+        workspace = CmdWorkspace(self.workspace_dir, cmd)
+        cmd.pull(workspace)
+        auth_header = cmd._pool_manager.headers['Authorization']
+        self.assertEqual(credentials, auth_header)
+
+    def test_clone(self):
+        self.cmd.init_new(self.workspace)
+        target = os.path.join(self.working_dir, 'new_target')
+        workspace = CmdWorkspace(target)
+        credentials = 'Basic username:password'
+        cmd = TrapDulwichCmd(remote=self.workspace_dir)
+        cmd.set_authorization(credentials)
+        cmd.clone(workspace)
+
+        self.assertTrue(isdir(join(target, self.marker)))
+        auth_header = cmd._pool_manager.headers['Authorization']
+        self.assertEqual(credentials, auth_header)
+
+    @skip("Not applicable.")
+    def test_auto_init(self):
+        pass
