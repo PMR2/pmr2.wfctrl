@@ -21,7 +21,6 @@ except ImportError:
 from pmr2.wfctrl.core import get_cmd_by_name
 from pmr2.wfctrl.core import CmdWorkspace
 from pmr2.wfctrl.cmd import GitDvcsCmd
-from pmr2.wfctrl.cmd import MercurialDvcsCmd
 from pmr2.wfctrl.cmd import DulwichDvcsCmd
 from pmr2.wfctrl.cmd import AuthenticatedGitDvcsCmd
 from pmr2.wfctrl.cmd import AuthenticatedDulwichDvcsCmd
@@ -282,42 +281,6 @@ class GitDvcsCmdTestCase(CoreTestCase, RawCmdTests):
     @skipIf(DulwichDvcsCmd.available(), 'git is not available')
     def test_auto_init(self):  # pragma: no cover
         super(GitDvcsCmdTestCase, self).test_auto_init()
-
-
-@skipIf(not MercurialDvcsCmd.available(), 'mercurial is not available')
-@skipIf(
-    platform.python_implementation() != 'CPython',
-    'only doing mercurial tests with CPython',
-)
-class MercurialDvcsCmdTestCase(CoreTestCase, RawCmdTests):
-    cmdcls = MercurialDvcsCmd
-
-    def setUp(self):
-        super(MercurialDvcsCmdTestCase, self).setUp()
-        self.cmd = MercurialDvcsCmd()
-        self.workspace = CmdWorkspace(self.workspace_dir, self.cmd)
-
-    def _log(self, workspace=None):
-        return MercurialDvcsCmd._execute(self.cmd._args(self.workspace, 'log'))
-
-    def _ls_root(self, workspace=None):
-        return MercurialDvcsCmd._execute(
-            self.cmd._args(self.workspace, 'manifest'))
-
-    def _make_remote(self):
-        target = os.path.join(self.working_dir, 'remote')
-        MercurialDvcsCmd._execute(['init', target])
-        return target
-
-    def test_read_write_remote(self):
-        self.cmd.init_new(self.workspace)
-        cmd = MercurialDvcsCmd(remote='http://example.com/hg')
-        cmd.write_remote(self.workspace)
-        with open(os.path.join(self.workspace_dir, '.hg', 'hgrc')) as fd:
-            self.assertTrue('default = http://example.com/hg' in fd.read())
-
-    def test_get_cmd_by_name(self):
-        self.assertEqual(get_cmd_by_name('mercurial'), self.cmdcls)
 
 
 @skipIf(not DulwichDvcsCmd.available(), 'dulwich is not available')

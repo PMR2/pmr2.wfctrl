@@ -57,80 +57,6 @@ class DemoDvcsCmd(BaseDvcsCmdBin):
         self.queue.append([self.binary, 'push'])
 
 
-class MercurialDvcsCmd(BaseDvcsCmdBin):
-    cmd_binary = 'hg'
-    name = 'mercurial'
-    marker = '.hg'
-    default_remote = 'default'
-    _hgrc = 'hgrc'
-    _committer = None
-
-    def _args(self, workspace, *args):
-        result = ['-R', workspace.working_dir]
-        result.extend(args)
-        return result
-
-    def set_committer(self, name, email, **kw):
-        # TODO persist config.
-        self._committer = '%s <%s>' % (name, email)
-
-    def clone(self, workspace, **kw):
-        return self.execute('clone', self.remote, workspace.working_dir)
-
-    def init_new(self, workspace, **kw):
-        return self.execute('init', workspace.working_dir)
-
-    def add(self, workspace, path, **kw):
-        return self.execute(*self._args(workspace, 'add', path))
-
-    def commit(self, workspace, message, **kw):
-        # XXX need to customize the user name
-        cmd = ['commit', '-m', message]
-        if self._committer:
-            cmd.extend(['-u', self._committer])
-        return self.execute(*self._args(workspace, *cmd))
-
-    def read_remote(self, workspace, target_remote=None, **kw):
-        target_remote = target_remote or self.default_remote
-        target = join(workspace.working_dir, self.marker, self._hgrc)
-        cp = ConfigParser()
-        cp.read(target)
-        if cp.has_option('paths', target_remote):
-            return cp.get('paths', target_remote)
-
-    def write_remote(self, workspace, target_remote=None, **kw):
-        target_remote = target_remote or self.default_remote
-        target = join(workspace.working_dir, self.marker, self._hgrc)
-        cp = ConfigParser()
-        cp.read(target)
-        if not cp.has_section('paths'):
-            cp.add_section('paths')
-        cp.set('paths', target_remote, self.remote)
-        with open(target, 'w') as fd:
-            cp.write(fd)
-
-    def pull(self, workspace, username=None, password=None, **kw):
-        # XXX origin may be undefined
-        target = self.get_remote(workspace,
-                                 username=username, password=password)
-        # XXX assuming repo is clean
-        args = self._args(workspace, 'pull', target)
-        return self.execute(*args)
-
-    def push(self, workspace, username=None, password=None, **kw):
-        # XXX origin may be undefined
-        push_target = self.get_remote(workspace,
-                                      username=username, password=password)
-        args = self._args(workspace, 'push', push_target)
-        return self.execute(*args)
-
-    def reset_to_remote(self, workspace, branch=None):
-        if branch is None:
-            branch = 'tip'
-        args = self._args(workspace, 'update', '-C', '-r', branch)
-        return self.execute(*args)
-
-
 class GitDvcsCmd(BaseDvcsCmdBin):
     cmd_binary = 'git'
     name = 'git'
@@ -422,7 +348,7 @@ class AuthenticatedDulwichDvcsCmd(DulwichDvcsCmd):
 
 
 def _register():
-    register_cmd(MercurialDvcsCmd, DulwichDvcsCmd, GitDvcsCmd, AuthenticatedDulwichDvcsCmd, AuthenticatedGitDvcsCmd)
+    register_cmd(DulwichDvcsCmd, GitDvcsCmd, AuthenticatedDulwichDvcsCmd, AuthenticatedGitDvcsCmd)
 
 
 register = _register
